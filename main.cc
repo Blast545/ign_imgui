@@ -16,6 +16,7 @@
  */
 
 #include <cmath>
+#include <csignal>
 
 #include <ignition/msgs.hh>
 #include <ignition/common/Console.hh>
@@ -27,6 +28,7 @@
 #include <imgui/examples/imgui_impl_glfw.h>
 #include <imgui/examples/imgui_impl_opengl3.h>
 
+#include "CsvUtils.hh"
 #include "Histogram.hh"
 
 #include <GL/glew.h>
@@ -36,16 +38,76 @@ using namespace ignition;
 
 const size_t kDefaultHistBins = 100;
 const float kDefaultHistMin = 0.0f;
-const float kDefaultHistMax = 1.1f;
+const float kDefaultHistMax = 2.0f;
 
 const float kDefaultRTFMin = 0.0f;
-const float kDefaultRTFMax = 1.1f;
+const float kDefaultRTFMax = 2.0f;
 
 //////////////////////////////////////////////////
 static void glfw_error_callback(int error, const char* description)
 {
-    fprintf(stderr, "Glfw Error %d: %s\n", error, description);
+  fprintf(stderr, "Glfw Error %d: %s\n", error, description);
 }
+
+namespace ign_imgui
+{
+
+//////////////////////////////////////////////////
+void ToCsv(
+  std::ostream & ost, const ignition::math::SignalStats & stats,
+  const ign_imgui::Histogram & hist, double simTime, double realTime)
+{
+  ost << simTime << "," << realTime << "," << std::endl;
+  ost << stats.Count() << "," << stats.Map()["mean"] << "," << stats.Map()["var"] <<
+    "," << stats.Map()["min"] << "," << stats.Map()["max"] << "," << std::endl;
+  hist.ToCsv(ost);
+}
+
+struct LoadedData
+{
+  size_t count;
+  double mean;
+  double var;
+  double max;
+  double min;
+
+  double realTime;
+  double simTime;
+};
+
+//////////////////////////////////////////////////
+LoadedData FromCsv(
+  std::istream & ist, ign_imgui::Histogram & hist)
+{
+  using ign_imgui::GetNextCsv;
+  using ign_imgui::GetNewLine;
+
+  LoadedData data;
+  GetNextCsv(ist, data.simTime);
+  GetNextCsv(ist, data.realTime);
+  GetNewLine(ist);
+  GetNextCsv(ist, data.count);
+  GetNextCsv(ist, data.mean);
+  GetNextCsv(ist, data.var);
+  GetNextCsv(ist, data.min);
+  GetNextCsv(ist, data.max);
+  GetNewLine(ist);
+
+  hist.FromCsv(ist);
+  while (ist.good()) {
+    std::string str;
+    ist >> str;
+    std::cout << str;
+  }
+  std::cout << std::endl;
+  IGN_IMGUI_CHECK_STREAM(ist, eof);
+
+  return data;
+}
+
+}  // namespace ign_imgui
+
+bool shouldClose{false};
 
 //////////////////////////////////////////////////
 int main(int _argc, char** _argv)
@@ -54,6 +116,29 @@ int main(int _argc, char** _argv)
   glfwSetErrorCallback(glfw_error_callback);
   if(!glfwInit())
     return 1;
+
+  std::signal(SIGINT, [](int) {
+    shouldClose = true;
+  });
+
+  std::string outputCsv;
+  std::string inputCsv;
+  for (size_t i = 1; i < _argc; ++i) {
+    if (i + 1u < _argc) {
+      if (0 == strcmp(_argv[i], "--output") || 0 == strcmp(_argv[i], "-o")) {
+        outputCsv = _argv[++i];
+        ++i;
+        continue;
+      }
+      if (0 == strcmp(_argv[i], "--input") || 0 == strcmp(_argv[i], "-i")) {
+        inputCsv = _argv[++i];
+        ++i;
+        continue;
+      }
+    }
+    std::cout << std::endl << _argv[0] << " [--output <OUTPUT_FILE_PATH>]" << std::endl;
+    std::exit(0);
+  }
 
   const char* glsl_version = "#version 130";
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -86,56 +171,70 @@ int main(int _argc, char** _argv)
 
   ign_imgui::Histogram hist;
 
-  hist.SetNumBins(100);
-  hist.SetRange(0.0f, 1.1f);
+  hist.SetNumBins(200);
+  hist.SetRange(0.0f, 2.0f);
 
-  std::function<void(const ignition::msgs::Clock&)> cb =
-    [&](const ignition::msgs::Clock &_msg)
-    {
-      std::lock_guard<std::mutex> lock(rtfsMutex);
+  ignition::common::Time real_z{};
+  ignition::common::Time sim_z{};
 
-      if (first)
+  bool usingLoadedData{false};
+  ign_imgui::LoadedData loadedData;
+
+
+  if (inputCsv.size()) {
+    std::ifstream fs;
+    fs.open(inputCsv);
+    loadedData = ign_imgui::FromCsv(fs, hist);
+    usingLoadedData = true;
+  }
+
+  if (!usingLoadedData) {
+    std::function<void(const ignition::msgs::Clock&)> cb =
+      [&](const ignition::msgs::Clock &_msg)
       {
+        std::lock_guard<std::mutex> lock(rtfsMutex);
+
+        if (first)
+        {
+          msg_z = _msg;
+          first = false;
+          return;
+        }
+
+        real_z = ignition::common::Time(msg_z.real().sec(), msg_z.real().nsec());
+        sim_z= ignition::common::Time(msg_z.sim().sec(), msg_z.sim().nsec());
+        ignition::common::Time real(_msg.real().sec(), _msg.real().nsec());
+        ignition::common::Time sim(_msg.sim().sec(), _msg.sim().nsec());
+
+        auto real_dt = (real - real_z);
+        auto sim_dt = (sim - sim_z);
+        auto rtf = sim_dt.Double() / real_dt.Double();
+
         msg_z = _msg;
-        first = false;
-        return;
-      }
 
-      ignition::common::Time real_z(msg_z.real().sec(), msg_z.real().nsec());
-      ignition::common::Time real(_msg.real().sec(), _msg.real().nsec());
-      ignition::common::Time sim_z(msg_z.sim().sec(), msg_z.sim().nsec());
-      ignition::common::Time sim(_msg.sim().sec(), _msg.sim().nsec());
-
-      auto real_dt = (real - real_z);
-      auto sim_dt = (sim - sim_z);
-      auto rtf = sim_dt.Double() / real_dt.Double();
-
-      msg_z = _msg;
-
-      if (animate && std::isfinite(rtf))
-      {
-        stats.InsertData(rtf);
-        hist.InsertData(rtf);
-
-        if (rtfs.size() > 250)
+        if (animate && std::isfinite(rtf))
         {
-          for(size_t ii = 1; ii < rtfs.size(); ++ii)
+          stats.InsertData(rtf);
+          hist.InsertData(rtf);
+
+          if (rtfs.size() > 250)
           {
-            rtfs[ii-1] = rtfs[ii];
+            for(size_t ii = 1; ii < rtfs.size(); ++ii)
+            {
+              rtfs[ii-1] = rtfs[ii];
+            }
+            rtfs[rtfs.size() - 1] = rtf;
           }
-          rtfs[rtfs.size() - 1] = rtf;
+          else
+          {
+            rtfs.push_back(rtf);
+          }
         }
-        else
-        {
-          rtfs.push_back(rtf);
-        }
-      }
 
-    };
-
+      };
+    node.Subscribe("/clock", cb);
+  }
   double progress = 0;
-
-  node.Subscribe("/clock", cb);
 
   // Setup Dear ImGui context
   IMGUI_CHECKVERSION();
@@ -150,7 +249,7 @@ int main(int _argc, char** _argv)
   float rtfMin = kDefaultRTFMin;
   float rtfMax = kDefaultRTFMax;
 
-  while (!glfwWindowShouldClose(window))
+  while (!glfwWindowShouldClose(window) && !shouldClose)
   {
     glfwPollEvents();
     ImGui_ImplOpenGL3_NewFrame();
@@ -182,24 +281,39 @@ int main(int _argc, char** _argv)
       {
         hist.Reset();
         stats.Reset();
+        usingLoadedData = false;
       }
 
       // Statistics
       ImGui::Separator();
-      ImGui::Text("Samples: %zi", stats.Count());
-      ImGui::Text("Mean: %f", stats.Map()["mean"]);
-      ImGui::Text("Var: %f", stats.Map()["var"]);
-      ImGui::Text("Max: %f", stats.Map()["max"]);
-      ImGui::Text("Min: %f", stats.Map()["min"]);
+      if (!usingLoadedData) {
+        ImGui::Text("Samples: %zi", stats.Count());
+        ImGui::Text("Mean: %f", stats.Map()["mean"]);
+        ImGui::Text("Var: %f", stats.Map()["var"]);
+        ImGui::Text("Max: %f", stats.Map()["max"]);
+        ImGui::Text("Min: %f", stats.Map()["min"]);
+      } else {
+        ImGui::Text("Samples: %zi", loadedData.count);
+        ImGui::Text("Mean: %f", loadedData.mean);
+        ImGui::Text("Var: %f", loadedData.var);
+        ImGui::Text("Max: %f", loadedData.max);
+        ImGui::Text("Min: %f", loadedData.min);
+      }
 
       ImGui::Separator();
 
       ignition::common::Time real_z(msg_z.real().sec(), msg_z.real().nsec());
       ignition::common::Time sim_z(msg_z.sim().sec(), msg_z.sim().nsec());
 
-      ImGui::Text("Real Time: %.3f", real_z.Double());
-      ImGui::Text("Sim Time: %.3f", sim_z.Double());
-      ImGui::Text("Elapsed RTF: %.3f", sim_z.Double() / real_z.Double());
+      if (!usingLoadedData) {
+        ImGui::Text("Real Time: %.3f", real_z.Double());
+        ImGui::Text("Sim Time: %.3f", sim_z.Double());
+        ImGui::Text("Elapsed RTF: %.3f", sim_z.Double() / real_z.Double());
+      } else {
+        ImGui::Text("Real Time: %.3f", loadedData.realTime);
+        ImGui::Text("Sim Time: %.3f", loadedData.simTime);
+        ImGui::Text("Elapsed RTF: %.3f", loadedData.simTime / loadedData.realTime);
+      }
 
 
       ImGui::End();
@@ -221,5 +335,15 @@ int main(int _argc, char** _argv)
 
   glfwDestroyWindow(window);
   glfwTerminate();
+
+  node.Unsubscribe("/clock");
+
+  if (outputCsv.size()) {
+    std::ofstream fs;
+    fs.open(outputCsv, std::ios::trunc);
+    ign_imgui::ToCsv(fs, stats, hist, sim_z.Double(), real_z.Double());
+    fs.close();
+  }
+
   return 0;
 }

@@ -15,9 +15,13 @@
  *
  */
 
+#include "CsvUtils.hh"
 #include "Histogram.hh"
 
 #include <algorithm>
+#include <istream>
+#include <ostream>
+#include <sstream>
 
 namespace ign_imgui
 {
@@ -87,6 +91,34 @@ void Histogram::PlotHistogram(const std::string &_label, ImVec2 _graphSize)
                        _graphSize);
 }
 
+//////////////////////////////////////////////////
+void Histogram::ToCsv(std::ostream & ost) const
+{
+  std::lock_guard<std::mutex> lock(this->dataMutex);
+  ost << this->minBin << "," << this->maxBin << "," << this->numBins << "," << std::endl;
+  for (auto count : this->counts)
+    ost << count << ",";
+  ost << std::endl;
+}
+
+//////////////////////////////////////////////////
+void Histogram::FromCsv(std::istream & ist)
+{
+  GetNextCsv(ist, this->minBin);
+  GetNextCsv(ist, this->maxBin);
+  GetNextCsv(ist, this->numBins);
+  GetNewLine(ist);
+
+  this->Update();
+
+
+  for (size_t i = 0u; ist.good() && i < this->counts.size(); ++i) {
+    float val;
+    GetNextCsv(ist, val);
+    this->counts.at(i) = val;
+  }
+  ist >> std::ws;
+}
 
 }  // namespace ign_imgui
 

@@ -20,7 +20,10 @@
 
 #include <cstdlib>
 
+#include <istream>
 #include <mutex>
+#include <ostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -42,6 +45,10 @@ class Histogram
   public: void PlotHistogram(const std::string &_label,
                              ImVec2 _graphSize=ImVec2(0,0));
 
+  public: void ToCsv(std::ostream & ost) const;
+
+  public: void FromCsv(std::istream & ist);
+
 
   protected: void Update();
 
@@ -51,7 +58,7 @@ class Histogram
   protected: float binStep;
   protected: std::vector<float> counts;
   protected: std::vector<float> bins;
-  protected: std::mutex dataMutex;
+  protected: mutable std::mutex dataMutex;
 };
 
 }  // namespace ign_imgui
