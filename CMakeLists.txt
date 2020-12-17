@@ -45,3 +45,7 @@ target_link_libraries(ign_imgui
   ${GLEW_LIBRARIES}
 )
 
+install(
+  TARGETS ign_imgui
+  DESTINATION bin
+)
