@@ -136,7 +136,7 @@ int main(int _argc, char** _argv)
         continue;
       }
     }
-    std::cout << std::endl << _argv[0] << " [--output <OUTPUT_FILE_PATH>]" << std::endl;
+    std::cout << std::endl << _argv[0] << " [--output <OUTPUT_FILE_PATH>] [--input <OUTPUT_FILE_PATH>]" << std::endl;
     std::exit(0);
   }
 
