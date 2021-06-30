@@ -25,14 +25,9 @@
 #include <ignition/transport/Node.hh>
 
 #include <imgui/imgui.h>
-#include <imgui/examples/imgui_impl_glfw.h>
-#include <imgui/examples/imgui_impl_opengl3.h>
 
 #include "CsvUtils.hh"
 #include "Histogram.hh"
-
-#include <GL/glew.h>
-#include <GLFW/glfw3.h>
 
 using namespace ignition;
 
@@ -42,12 +37,6 @@ const float kDefaultHistMax = 2.0f;
 
 const float kDefaultRTFMin = 0.0f;
 const float kDefaultRTFMax = 2.0f;
-
-//////////////////////////////////////////////////
-static void glfw_error_callback(int error, const char* description)
-{
-  fprintf(stderr, "Glfw Error %d: %s\n", error, description);
-}
 
 namespace ign_imgui
 {
@@ -112,11 +101,6 @@ bool shouldClose{false};
 //////////////////////////////////////////////////
 int main(int _argc, char** _argv)
 {
-  // Initialize OpenGL
-  glfwSetErrorCallback(glfw_error_callback);
-  if(!glfwInit())
-    return 1;
-
   std::signal(SIGINT, [](int) {
     shouldClose = true;
   });
@@ -139,17 +123,6 @@ int main(int _argc, char** _argv)
     std::cout << std::endl << _argv[0] << " [--output <OUTPUT_FILE_PATH>] [--input <OUTPUT_FILE_PATH>]" << std::endl;
     std::exit(0);
   }
-
-  const char* glsl_version = "#version 130";
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-
-  GLFWwindow* window = glfwCreateWindow(400, 400, "ign_imgui", NULL, NULL);
-  if (window == NULL)
-    return 1;
-  glfwMakeContextCurrent(window);
-  glfwSwapInterval(1); // Enable vsync
-  bool err = glewInit() != 0;
 
   // Set verbosity
   ignition::common::Console::SetVerbosity(4);
@@ -179,7 +152,6 @@ int main(int _argc, char** _argv)
 
   bool usingLoadedData{false};
   ign_imgui::LoadedData loadedData;
-
 
   if (inputCsv.size()) {
     std::ifstream fs;
@@ -236,106 +208,18 @@ int main(int _argc, char** _argv)
   }
   double progress = 0;
 
-  // Setup Dear ImGui context
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGuiIO& io = ImGui::GetIO(); (void)io;
-  ImGui::StyleColorsDark();
-  ImGui_ImplGlfw_InitForOpenGL(window, true);
-  ImGui_ImplOpenGL3_Init(glsl_version);
-
-  ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-
   float rtfMin = kDefaultRTFMin;
   float rtfMax = kDefaultRTFMax;
 
-  while (!glfwWindowShouldClose(window) && !shouldClose)
+  while(!shouldClose)
   {
-    glfwPollEvents();
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    //ImGui::ShowDemoWindow();
-
     {
-      std::lock_guard<std::mutex> lock(rtfsMutex);
-
-      bool p_open;
-      ImGui::Begin("RTF", &p_open, ImGuiWindowFlags_AlwaysAutoResize);
-
-      ImGui::Checkbox("Animate", &animate);
-
-      // Line plot
-      ImGui::PlotLines("RTF", &rtfs[0], rtfs.size(), 0, NULL, rtfMin, rtfMax,
-          ImVec2(400, 400));
-
-      ImGui::InputFloat("RTF Y-axis min", &rtfMin, 0.0f, 10.0f, "%.3f");
-      ImGui::InputFloat("RTF Y-axis max", &rtfMax, 0.0f, 10.0f, "%.3f");
-
-      // Histogram
-      ImGui::Separator();
-      hist.PlotHistogram("RTF Histogram", ImVec2(400, 400));
-
-      if (ImGui::Button("Reset"))
-      {
-        hist.Reset();
-        stats.Reset();
-        usingLoadedData = false;
-      }
-
-      // Statistics
-      ImGui::Separator();
-      if (!usingLoadedData) {
-        ImGui::Text("Samples: %zi", stats.Count());
-        ImGui::Text("Mean: %f", stats.Map()["mean"]);
-        ImGui::Text("Var: %f", stats.Map()["var"]);
-        ImGui::Text("Max: %f", stats.Map()["max"]);
-        ImGui::Text("Min: %f", stats.Map()["min"]);
-      } else {
-        ImGui::Text("Samples: %zi", loadedData.count);
-        ImGui::Text("Mean: %f", loadedData.mean);
-        ImGui::Text("Var: %f", loadedData.var);
-        ImGui::Text("Max: %f", loadedData.max);
-        ImGui::Text("Min: %f", loadedData.min);
-      }
-
-      ImGui::Separator();
-
-      ignition::common::Time real_z(msg_z.real().sec(), msg_z.real().nsec());
-      ignition::common::Time sim_z(msg_z.sim().sec(), msg_z.sim().nsec());
-
-      if (!usingLoadedData) {
-        ImGui::Text("Real Time: %.3f", real_z.Double());
-        ImGui::Text("Sim Time: %.3f", sim_z.Double());
-        ImGui::Text("Elapsed RTF: %.3f", sim_z.Double() / real_z.Double());
-      } else {
-        ImGui::Text("Real Time: %.3f", loadedData.realTime);
-        ImGui::Text("Sim Time: %.3f", loadedData.simTime);
-        ImGui::Text("Elapsed RTF: %.3f", loadedData.simTime / loadedData.realTime);
-      }
-
-
-      ImGui::End();
+      // Callback from /clock topic is saving all the info
+      //std::lock_guard<std::mutex> lock(rtfsMutex);
+      //ignition::common::Time real_z(msg_z.real().sec(), msg_z.real().nsec());
+      //ignition::common::Time sim_z(msg_z.sim().sec(), msg_z.sim().nsec());
     }
-
-    ImGui::Render();
-    int display_w, display_h;
-    glfwGetFramebufferSize(window, &display_w, &display_h);
-    glViewport(0, 0, display_w, display_h);
-    glClearColor(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    glfwSwapBuffers(window);
   }
-
-  ImGui_ImplOpenGL3_Shutdown();
-  ImGui_ImplGlfw_Shutdown();
-  ImGui::DestroyContext();
-
-  glfwDestroyWindow(window);
-  glfwTerminate();
-
   node.Unsubscribe("/clock");
 
   if (outputCsv.size()) {
