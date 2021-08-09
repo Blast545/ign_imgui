@@ -107,7 +107,7 @@ LoadedData FromCsv(
 
 }  // namespace ign_imgui
 
-bool shouldClose{false};
+std::atomic<bool> shouldClose{false};
 
 //////////////////////////////////////////////////
 int main(int _argc, char** _argv)
